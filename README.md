@@ -12,21 +12,14 @@
 ## 快速部署
 
 ```bash
-# 1. 克隆仓库
-git clone <this-repo>
-cd deepseek-proxy
-
-# 2. 修改 API Key
-# 编辑 deepseek-proxy.mjs，将 DEEPSEEK_API_KEY 改为你的 DeepSeek API Key
-
-# 3. 启动代理
+git clone https://github.com/fxl625-bit/deepseek-claude-proxy.git
+cd deepseek-claude-proxy
 node deepseek-proxy.mjs
-
-# 4. 验证
-curl http://127.0.0.1:3456/anthropic/v1/messages
 ```
 
-## settings.json 配置
+## 配置 Claude Code
+
+编辑 `~/.claude/settings.json`：
 
 ```json
 {
@@ -44,26 +37,29 @@ curl http://127.0.0.1:3456/anthropic/v1/messages
 }
 ```
 
-## 文件说明
+> API Key 只需配在 `settings.json` 中，代理会自动转发请求头中的认证信息到 DeepSeek。
+
+## 验证
+
+```bash
+curl http://127.0.0.1:3456/anthropic/v1/messages
+```
+
+## 启动方式
 
 | 文件 | 用途 |
 |------|------|
 | `deepseek-proxy.mjs` | 代理主程序 (v1.2.0) |
-| `start-proxy.vbs` | Windows 静默启动 |
-| `start-proxy.bat` | 手动启动（带控制台） |
+| `start-proxy.vbs` | Windows 静默启动（后台常驻） |
+| `start-proxy.bat` | 手动启动（带控制台，调试用） |
 | `start-proxy-silent.bat` | bat 方式静默启动 |
 | `install-autostart.ps1` | 安装开机自启 |
 | `uninstall-autostart.ps1` | 卸载开机自启 |
 
-## ⚠️ 安全提示
-
-- `deepseek-proxy.mjs` 中硬编码了 API Key，**提交到公开仓库前务必替换**
-- 代理监听 `127.0.0.1:3456`，仅本机可访问，不暴露到外网
-
 ## 版本
 
-v1.2.0 (2026-06-01) — 新增缓存率暴跌修复
+v1.2.0 (2026-06-01) — 新增缓存率暴跌修复（billing header 剥离）
 
 ## 许可
 
-Private — 仅供个人使用。
+MIT

@@ -20,7 +20,7 @@ import https from 'https';
 
 const PORT = 3456;
 const DEEPSEEK_BASE = 'https://api.deepseek.com';
-const DEEPSEEK_API_KEY = '<your-deepseek-api-key>';  // 替换为你的 DeepSeek API Key
+const DEEPSEEK_API_KEY = '<your-deepseek-api-key>';
 
 /**
  * 剥离 Claude Code 注入的动态归属头 (billing header)
