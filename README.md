@@ -58,7 +58,7 @@ curl http://127.0.0.1:3456/anthropic/v1/messages
 
 ## 版本
 
-v1.2.0 (2026-06-01) — 新增缓存率暴跌修复（billing header 剥离）
+v1.3.0 (2026-06-01) — 新增稳定 JSON 序列化（sorted keys），消除 key 顺序漂移导致的缓存失效
 
 ## 许可
 
