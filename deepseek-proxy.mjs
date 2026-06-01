@@ -1,7 +1,7 @@
 /**
  * Claude Code -> DeepSeek Anthropic API 格式转换代理
  *
- * @version 1.3.0
+ * @version 1.4.0
  * @date    2026-06-01
  *
  * 功能：
