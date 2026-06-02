@@ -1,8 +1,8 @@
 /**
  * Claude Code -> DeepSeek Anthropic API 格式转换代理
  *
- * @version 1.5.0
- * @date    2026-06-01
+ * @version 1.6.0
+ * @date    2026-06-02
  *
  * 功能：
  *   1. 将 Claude Code 发送的 messages 数组中的 system role 提取到顶级 system 参数
@@ -20,10 +20,36 @@
 import http from 'http';
 import https from 'https';
 import fs from 'fs';
+import crypto from 'crypto';
+import path from 'path';
 
 const PORT = 3456;
 const DEEPSEEK_BASE = 'https://api.deepseek.com';
-const DEEPSEEK_API_KEY = '<your-deepseek-api-key>';  // 替换为你的 API Key，或通过 x-api-key 请求头传入（代理自动转发）
+const DIAG_DIR = process.env.CLAUDE_CACHE_DIAG_DIR || path.join(process.cwd(), '.claude-cache-diagnostics');
+const USAGE_LOG_PATH = path.join(DIAG_DIR, 'cache-usage.jsonl');
+
+const MODEL_ROUTING = {
+  sonnet: process.env.DEEPSEEK_SONNET_MODEL || process.env.DEEPSEEK_DEFAULT_MODEL || 'deepseek-v4-pro[1m]',
+  opus: process.env.DEEPSEEK_OPUS_MODEL || process.env.DEEPSEEK_DEFAULT_MODEL || 'deepseek-v4-pro[1m]',
+  haiku: process.env.DEEPSEEK_HAIKU_MODEL || 'deepseek-v4-flash',
+};
+
+function parseModelAliasMap() {
+  const raw = process.env.DEEPSEEK_MODEL_ALIAS_MAP;
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    return parsed;
+  } catch (e) {
+    console.error('[CONFIG] Invalid DEEPSEEK_MODEL_ALIAS_MAP JSON:', e.message);
+    return {};
+  }
+}
+
+const MODEL_ALIAS_MAP = parseModelAliasMap();
+
+fs.mkdirSync(DIAG_DIR, { recursive: true });
 
 /**
  * 稳定 JSON 序列化：递归排序对象 key，确保跨请求字节一致
@@ -45,6 +71,55 @@ function stableStringify(obj) {
   const keys = Object.keys(obj).sort();
   const pairs = keys.map(k => JSON.stringify(k) + ':' + stableStringify(obj[k]));
   return '{' + pairs.join(',') + '}';
+}
+
+function sha256Short(str) {
+  return crypto.createHash('sha256').update(String(str || '')).digest('hex').slice(0, 16);
+}
+
+function mapModel(model) {
+  if (!model) return model;
+  if (model.startsWith('deepseek-')) return model;
+  if (MODEL_ALIAS_MAP[model]) return MODEL_ALIAS_MAP[model];
+  if (/sonnet/i.test(model)) return MODEL_ROUTING.sonnet;
+  if (/opus/i.test(model)) return MODEL_ROUTING.opus;
+  if (/haiku/i.test(model)) return MODEL_ROUTING.haiku;
+  return process.env.DEEPSEEK_UNKNOWN_MODEL_FALLBACK || model;
+}
+
+function extractUsage(payload) {
+  const usage = payload?.usage || {};
+  const cacheRead = usage.cache_read_input_tokens ?? null;
+  const cacheCreation = usage.cache_creation_input_tokens ?? null;
+  const promptHit = usage.prompt_cache_hit_tokens ?? null;
+  const promptMiss = usage.prompt_cache_miss_tokens ?? null;
+  const hit = promptHit ?? cacheRead ?? 0;
+  const miss = promptMiss ?? cacheCreation ?? 0;
+  const denominator = hit + miss;
+
+  return {
+    input_tokens: usage.input_tokens ?? null,
+    output_tokens: usage.output_tokens ?? null,
+    cache_read_input_tokens: cacheRead,
+    cache_creation_input_tokens: cacheCreation,
+    prompt_cache_hit_tokens: promptHit,
+    prompt_cache_miss_tokens: promptMiss,
+    computed_cache_hit_rate: denominator > 0 ? Number((hit / denominator).toFixed(4)) : null,
+  };
+}
+
+function logUsage(baseRecord, payload, extra = {}) {
+  try {
+    const record = {
+      ts: new Date().toISOString(),
+      ...baseRecord,
+      ...extractUsage(payload),
+      ...extra,
+    };
+    fs.appendFileSync(USAGE_LOG_PATH, JSON.stringify(record) + '\n');
+  } catch (e) {
+    console.error('[USAGE_LOG_ERR]', e.message);
+  }
 }
 
 /**
@@ -86,7 +161,7 @@ function transformRequest(body) {
     }
   }
 
-  const transformed = { ...body, messages: cleanMessages };
+  const transformed = { ...body, model: mapModel(body.model), messages: cleanMessages };
 
   // Set system as top-level parameter if we found system messages
   if (systemMessages.length > 0) {
@@ -150,12 +225,58 @@ function diagLog(body) {
 
   const line = `[DIAG #${requestSeq}] sys=${sysLen}B(h=${sysHash}${sysChanged}) | tools=${toolCount}(h=${toolsHash}${toolsChanged}) | msgs=${msgCount} head50=${headHash} tail4=${tailHash} | body=${Math.round(totalBodySize/1024)}KB`;
   console.log(line);
-  diagHistory.push({ time: new Date().toISOString(), seq: requestSeq, sysLen, sysHash, sysChanged: !!sysChanged, toolsHash, toolsChanged: !!toolsChanged, toolCount, msgCount, headHash, tailHash, bodyKB: Math.round(totalBodySize/1024) });
+  const entry = { time: new Date().toISOString(), seq: requestSeq, sysLen, sysHash, sysChanged: !!sysChanged, toolsHash, toolsChanged: !!toolsChanged, toolCount, msgCount, headHash, tailHash, bodyKB: Math.round(totalBodySize/1024) };
+  diagHistory.push(entry);
   const diagPath = 'F:/CODEX/deepseek-proxy/diag.log';
   fs.appendFileSync(diagPath, new Date().toISOString() + ' ' + line + '\n');
+  return entry;
   } catch (e) {
     // 兜底：诊断崩了也不能影响代理
     console.error('[DIAG_ERR]', e.message);
+    return { seq: requestSeq };
+  }
+}
+
+function buildUsageBaseRecord({ originalBody, transformed, diagEntry, targetUrl, startedAt }) {
+  const messages = transformed.messages || [];
+  return {
+    request_id: `proxy-${diagEntry.seq}`,
+    method: 'POST',
+    path: targetUrl.pathname,
+    status: null,
+    model_requested: originalBody.model || null,
+    model_forwarded: transformed.model || null,
+    model_was_mapped: (originalBody.model || null) !== (transformed.model || null),
+    base_url: DEEPSEEK_BASE + '/anthropic',
+    cwd: process.cwd(),
+    effort_level: process.env.CLAUDE_CODE_EFFORT_LEVEL || null,
+    tools_hash: diagEntry.toolsHash || null,
+    system_prompt_hash: sha256Short(typeof transformed.system === 'string' ? transformed.system : stableStringify(transformed.system || '')),
+    messages_prefix_hash: sha256Short(stableStringify(messages.slice(0, 50))),
+    request_body_hash: sha256Short(stableStringify(transformed)),
+  };
+}
+
+function parseSseUsageChunk(state, chunk) {
+  state.buffer += chunk.toString('utf8');
+  const lines = state.buffer.split(/\r?\n/);
+  state.buffer = lines.pop() || '';
+
+  for (const line of lines) {
+    if (!line.startsWith('data:')) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === '[DONE]') continue;
+    try {
+      const parsed = JSON.parse(data);
+      if (parsed?.usage) {
+        state.payload = { usage: { ...(state.payload?.usage || {}), ...parsed.usage } };
+      }
+      if (parsed?.message?.usage) {
+        state.payload = { usage: { ...(state.payload?.usage || {}), ...parsed.message.usage } };
+      }
+    } catch {
+      // Ignore partial or non-JSON SSE data; response bytes still pass through.
+    }
   }
 }
 
@@ -185,8 +306,9 @@ function proxyRequest(clientReq, clientRes) {
         return;
       }
 
+      const startedAt = Date.now();
       const transformed = transformRequest(body);
-      diagLog(transformed);  // 诊断缓存前缀
+      const diagEntry = diagLog(transformed);  // 诊断缓存前缀
       const transformedStr = stableStringify(transformed);  // 稳定排序，确保缓存命中
 
       // Forward to DeepSeek
@@ -199,6 +321,14 @@ function proxyRequest(clientReq, clientRes) {
         clientRes.end(JSON.stringify({ error: 'Invalid URL: ' + targetPath }));
         return;
       }
+
+      const usageBaseRecord = buildUsageBaseRecord({
+        originalBody: body,
+        transformed,
+        diagEntry,
+        targetUrl,
+        startedAt,
+      });
 
       const headers = { ...clientReq.headers };
       headers['host'] = targetUrl.host;
@@ -217,10 +347,30 @@ function proxyRequest(clientReq, clientRes) {
         // Handle streaming responses (SSE)
         if (proxyRes.headers['content-type']?.includes('text/event-stream')) {
           clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
-          proxyRes.pipe(clientRes);
+          const sseState = { buffer: '', payload: { usage: {} } };
+          proxyRes.on('data', chunk => {
+            parseSseUsageChunk(sseState, chunk);
+            clientRes.write(chunk);
+          });
+          proxyRes.on('end', () => {
+            clientRes.end();
+            logUsage(usageBaseRecord, sseState.payload, {
+              status: proxyRes.statusCode,
+              response_content_type: proxyRes.headers['content-type'] || null,
+              stream: true,
+              latency_ms: Date.now() - startedAt,
+            });
+          });
           proxyRes.on('error', (err) => {
             console.error('[ERROR] Stream pipe error:', err.message);
             clientRes.end();
+            logUsage(usageBaseRecord, sseState.payload, {
+              status: proxyRes.statusCode,
+              response_content_type: proxyRes.headers['content-type'] || null,
+              stream: true,
+              latency_ms: Date.now() - startedAt,
+              error: err.message,
+            });
           });
         } else {
           let responseBody = [];
@@ -233,6 +383,19 @@ function proxyRequest(clientReq, clientRes) {
                 'Access-Control-Allow-Origin': '*',
               });
               clientRes.end(responseStr);
+              let responseJson = null;
+              try {
+                responseJson = JSON.parse(responseStr);
+              } catch {
+                responseJson = null;
+              }
+              logUsage(usageBaseRecord, responseJson, {
+                status: proxyRes.statusCode,
+                response_content_type: proxyRes.headers['content-type'] || null,
+                stream: false,
+                model_returned: responseJson?.model || null,
+                latency_ms: Date.now() - startedAt,
+              });
             } catch (e) {
               console.error('[ERROR] Response send error:', e.message);
               if (!clientRes.headersSent) {
@@ -246,6 +409,12 @@ function proxyRequest(clientReq, clientRes) {
 
       proxyReq.on('error', (err) => {
         console.error('[ERROR] Proxy request failed:', err.message);
+        logUsage(usageBaseRecord, null, {
+          status: 502,
+          stream: null,
+          latency_ms: Date.now() - startedAt,
+          error: err.message,
+        });
         if (!clientRes.headersSent) {
           clientRes.writeHead(502, { 'Content-Type': 'application/json' });
         }
@@ -255,6 +424,12 @@ function proxyRequest(clientReq, clientRes) {
       proxyReq.on('timeout', () => {
         console.error('[ERROR] Proxy request timeout');
         proxyReq.destroy();
+        logUsage(usageBaseRecord, null, {
+          status: 504,
+          stream: null,
+          latency_ms: Date.now() - startedAt,
+          error: 'Upstream timeout',
+        });
         if (!clientRes.headersSent) {
           clientRes.writeHead(504, { 'Content-Type': 'application/json' });
         }
@@ -274,6 +449,9 @@ const server = http.createServer((req, res) => {
       requestSeq,
       lastSystemHash,
       lastToolsHash,
+      usageLogPath: USAGE_LOG_PATH,
+      modelRouting: MODEL_ROUTING,
+      exactModelAliasMap: MODEL_ALIAS_MAP,
       diagHistory: diagHistory.slice(-20),  // 最近20条
     }));
     return;
@@ -335,6 +513,7 @@ server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n========================================`);
   console.log(`  DeepSeek Proxy running on http://127.0.0.1:${PORT}`);
   console.log(`  Target: ${DEEPSEEK_BASE}`);
+  console.log(`  Usage log: ${USAGE_LOG_PATH}`);
   console.log(`  Claude Code settings.json BASE_URL:`);
   console.log(`  http://127.0.0.1:${PORT}/anthropic`);
   console.log(`========================================\n`);

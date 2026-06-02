@@ -4,8 +4,8 @@
 $WshShell = New-Object -ComObject WScript.Shell
 $StartupFolder = $WshShell.SpecialFolders("Startup")
 $ShortcutPath = Join-Path $StartupFolder "DeepSeek Proxy for Claude Code.lnk"
-$TargetPath = "F:\CODEX\deepseek-proxy\start-proxy.vbs"
-$WorkingDir = "F:\CODEX\deepseek-proxy"
+$WorkingDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$TargetPath = Join-Path $WorkingDir "start-proxy.vbs"
 
 # Create shortcut in Startup folder
 $Shortcut = $WshShell.CreateShortcut($ShortcutPath)

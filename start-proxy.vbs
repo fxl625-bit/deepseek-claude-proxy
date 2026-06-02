@@ -1,4 +1,7 @@
 Set WshShell = CreateObject("WScript.Shell")
+Set Fso = CreateObject("Scripting.FileSystemObject")
+ScriptDir = Fso.GetParentFolderName(WScript.ScriptFullName)
+ProxyPath = Fso.BuildPath(ScriptDir, "deepseek-proxy.mjs")
 
 ' Kill any existing proxy process
 On Error Resume Next
@@ -11,5 +14,5 @@ On Error GoTo 0
 
 WScript.Sleep 1000
 
-' Launch proxy hidden (PowerShell Start-Process -WindowStyle Hidden)
-WshShell.Run "powershell.exe -Command ""Start-Process -FilePath 'C:\Users\yckj0094\.workbuddy\binaries\node\versions\22.22.2\node.exe' -ArgumentList 'F:\CODEX\deepseek-proxy\deepseek-proxy.mjs' -WindowStyle Hidden""", 0, False
+' Launch proxy hidden using node from PATH
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command ""Set-Location -LiteralPath '" & Replace(ScriptDir, "'", "''") & "'; Start-Process -FilePath 'node' -ArgumentList '" & Replace(ProxyPath, "'", "''") & "' -WindowStyle Hidden""", 0, False
