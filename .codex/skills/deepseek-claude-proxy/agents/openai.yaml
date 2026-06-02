@@ -1,0 +1,4 @@
+interface:
+  display_name: "DeepSeek Claude Proxy"
+  short_description: "Operate and diagnose the DeepSeek Claude Code proxy."
+  default_prompt: "Use the DeepSeek Claude Proxy skill to start the proxy, verify /diag, inspect cache usage, and diagnose Claude Code cache misses without exposing secrets."

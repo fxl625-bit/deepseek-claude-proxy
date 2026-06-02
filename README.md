@@ -168,6 +168,16 @@ Get-Content .claude-cache-diagnostics\cache-usage.jsonl -Tail 20
 
 这些脚本使用脚本所在目录和 PATH 中的 `node`，不依赖固定本机路径。
 
+## Codex Skill
+
+仓库内置项目绑定 skill：
+
+```text
+.codex/skills/deepseek-claude-proxy/SKILL.md
+```
+
+这个 skill 用于让 Codex/Agent 安全地操作、验证、诊断和维护本代理。它只记录 hash 和 usage，不要求读取完整 prompt 或 API key。该 skill 已绑定本项目仓库，不应重复上传为通用 standalone skill。
+
 ## 安全边界
 
 - 不要把真实 API key 写进仓库。
