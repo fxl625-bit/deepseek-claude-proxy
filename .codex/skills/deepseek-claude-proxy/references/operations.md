@@ -4,7 +4,7 @@ Use this reference when operating or publishing the DeepSeek Claude Proxy.
 
 ## Source Boundaries
 
-- Treat this Git repository as the source authority.
+- Treat the matching repository under `CODEX_ROOT` as the source authority; on this workstation that project repository is `F:\CODEX\deepseek-proxy`.
 - Treat Obsidian mirrors as archives and indices, not as the commit source.
 - Do not write durable rules that only work on one machine-specific path.
 - Keep public defaults portable and free of personal model aliases.
@@ -88,4 +88,3 @@ If direct GitHub access fails but a local proxy is available, use per-command pr
 git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 ls-remote origin HEAD
 git -c http.proxy=http://127.0.0.1:7890 -c https.proxy=http://127.0.0.1:7890 push origin master
 ```
-
